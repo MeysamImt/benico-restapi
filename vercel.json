@@ -1,5 +1,5 @@
 {
   "buildCommand": "pnpm prisma generate && pnpm run build"
-,  "outputDirectory": "dist", // یا مسیر خروجی build شما
+,  "outputDirectory": "dist", 
   "ignoreCommand": "false"
 }
