@@ -1,5 +1,6 @@
 {
-  "buildCommand": "pnpm prisma generate && pnpm run build"
-,  "outputDirectory": "dist", 
+  "buildCommand": "pnpm prisma generate && pnpm run build",
+  "outputDirectory": "dist",
+  "installCommand": "pnpm install --legacy-peer-deps",
   "ignoreCommand": "false"
 }
