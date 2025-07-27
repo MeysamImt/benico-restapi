@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Service Status</title>
+<style>
+  html, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  body {
+    background-color: black;
+    color: white;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    justify-content: center; /* وسط چین عمودی */
+    align-items: center;    /* وسط چین افقی */
+    text-align: center;
+  }
+  .circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background-color: limegreen;
+    margin-bottom: 20px;
+    animation: pulse 2s infinite alternate;
+  }
+  @keyframes pulse {
+    0% {
+      background-color: limegreen;
+      box-shadow: 0 0 10px limegreen;
+    }
+    50% {
+      background-color: transparent;
+      box-shadow: none;
+    }
+    100% {
+      background-color: limegreen;
+      box-shadow: 0 0 10px limegreen;
+    }
+  }
+  .text-primary {
+    font-size: 1.8rem;
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  .text-secondary {
+    font-size: 1.2rem;
+    color: #ccc;
+    margin-bottom: 30px;
+  }
+  .btn-docs {
+    background-color: limegreen;
+    border: none;
+    border-radius: 25px;
+    padding: 12px 30px;
+    color: black;
+    font-weight: bold;
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .btn-docs:hover {
+    background-color: #32cd32cc;
+  }
+  .btn-docs .circle-btn {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background-color: limegreen;
+    animation: pulse 2s infinite alternate;
+  }
+</style>
+</head>
+<body>
+  <div class="circle"></div>
+  <div class="text-primary">تمام سرویس‌ها بدون هیچ مشکلی درحال کارکردن هستند</div>
+  <div class="text-secondary">All services are running without any issues</div>
+
+  <button id="docs-btn" class="btn-docs">
+    مستندات
+  </button>
+
+  <script src="/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,792 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ----------
+// ENUMS
+// ----------
+
+
+enum InvoiceStatus {
+  PAID
+  UNPAID
+  FAILED
+  REFUNDED
+}
+
+enum NotificationType {
+  SYSTEM
+  PAYMENT
+  FOLLOW
+  COMMENT
+  LIKE
+}
+
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum WalletTransactionType {
+  DEPOSIT
+  USAGE
+  REFUND
+}
+
+enum LoginStatus {
+  SUCCESS
+  FAILURE
+}
+
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentPurpose {
+  SUBSCRIPTION
+  PRODUCT
+  TRIP_RESERVATION
+  DONATION
+}
+
+enum PaymentProvider {
+  ZARINPAL
+  IDPAY
+  STRIPE
+  PAYPAL
+  MANUAL
+}
+
+enum TripStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum ProductType {
+  HOTEL
+  ACCOMMODATION
+  TOUR
+  ACTIVITY
+  OTHER
+}
+
+enum ReservationStatus {
+  PENDING      // در حال انتظار برای پرداخت
+  PAID         // پرداخت‌شده و فعال
+  CANCELLED    // لغوشده
+  FAILED       // پرداخت ناموفق
+  EXPIRED      // تاریخ گذشته و منقضی‌شده
+  ON_HOLD      // معلق نگه‌داشته‌شده (مثلاً به‌دلیل تایید ادمین)
+}
+
+enum ReservationPaymentStatus {
+  PAID
+  UNPAID
+  FAILED
+  REFUNDED
+  WAITING
+}
+
+// ----------
+// CORE USER & TENANT MODELS
+// ----------
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  username        String?   @unique
+  passwordHash    String
+  fullName        String?
+  phone           String?   @unique
+  avatarUrl       String?
+  gender          Gender?
+  birthdate       DateTime?
+  bio             String?
+  location        Json?
+  social          Json?
+  isEmailVerified Boolean   @default(false)
+  isPhoneVerified Boolean   @default(false)
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relational Fields
+  memberships     TenantMember[]
+  profile         UserProfile?
+  twoFactor       TwoFactorAuth?
+  sessions        Session[]
+  loginLogs       LoginLog[]
+  notifications   Notification[]
+  apiKeys         ApiKey[]
+  emailTokens     EmailVerificationToken[]
+  posts           Post[]
+  pins            Pin[]
+  likes           Like[]
+  comments        Comment[]
+  followers       Follow[]  @relation("following")
+  following       Follow[]  @relation("follower")
+  ownedTenants     Tenant[]            @relation("OwnedTenants")   // Tenant.owner
+  trips            Trip[]              // Trip.user
+  reservations     Reservation[]       // Reservation.user
+  createdProducts  Product[]           @relation("ProductCreatedBy") // Product.createdBy
+  creditWallets    CreditWallet[]      // CreditWallet.user
+  usageRecords     UsageRecord[]       // UsageRecord.user
+  auditLogs        AuditLog[]          @relation("UserAudit") // AuditLog.user
+  apiUsageLogs     ApiUsageLog[]       // ApiUsageLog.user
+  payments         Payment[]           // Payment.user
+}
+
+model UserProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  country     String?
+  province    String?
+  city        String?
+  address     String?
+  postalCode  String?
+  timezone    String?
+  language    String?
+  theme       String?
+  preferences Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  logoUrl      String?
+  description  String?
+  contactEmail String?
+  contactPhone String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relational Fields
+  ownerId      String
+  owner        User     @relation("OwnedTenants", fields: [ownerId], references: [id])
+  members      TenantMember[]
+  apiKeys      ApiKey[]
+  subscriptions Subscription[]
+  invoices     Invoice[]
+  usageRecords UsageRecord[]
+  auditLogs    AuditLog[]
+  webhooks     Webhook[]
+    creditWallets    CreditWallet[]       // CreditWallet.tenant
+  apiUsageLogs     ApiUsageLog[]        // ApiUsageLog.tenant
+}
+
+// Join table for User, Tenant, and Role
+model TenantMember {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String
+  roleId    String
+  createdAt DateTime @default(now())
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([tenantId, userId])
+}
+
+// ----------
+// RBAC (ROLE-BASED ACCESS CONTROL)
+// ----------
+
+model Role {
+  id          String       @id @default(cuid())
+  name        String       @unique // e.g., Admin, Member, Billing Manager
+  description String?
+  isGlobal    Boolean      @default(false) // True for SuperAdmin, false for tenant-specific roles
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relational Fields
+  permissions Permission[] @relation("RolePermissions")
+  members     TenantMember[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  action      String   // e.g., "create", "read", "update", "delete"
+  resource    String   // e.g., "invoice", "user", "apikey"
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relational Fields
+  roles       Role[]   @relation("RolePermissions")
+}
+
+// ----------
+// BILLING & SUBSCRIPTIONS
+// ----------
+
+model SubscriptionPlan {
+  id           String    @id @default(cuid())
+  name         String
+  slug         String    @unique
+  description  String?
+  price        Int       // in Toman or cents
+  billingCycle String    // "monthly", "yearly"
+  durationDays Int
+  maxUsers     Int
+  maxApiCalls  Int
+  maxStorageMb Int
+  features     Json
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relational Fields
+  subscriptions  Subscription[]
+  rateLimitPolicies RateLimitPolicy[]
+}
+
+
+model Trip {
+  id             String     @id @default(cuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id])
+
+  title          String
+  slug           String     @unique
+  description    String?
+
+  origin         String     // مبدا
+  destination    String     // مقصد
+  originCoords   Json?      // مختصات مبدا { lat, lng }
+  destCoords     Json?      // مختصات مقصد { lat, lng }
+
+  startDate      DateTime   // تاریخ شروع سفر
+  endDate        DateTime   // تاریخ پایان سفر
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  transportGo    String?    // وسیله نقلیه رفت (مانند هواپیما، قطار، اتوبوس)
+  transportBack  String?    // وسیله نقلیه برگشت
+
+  accommodation  String?    // محل اقامت (نام هتل یا آدرس)
+  accommodationLink String? // لینک رزرو یا اطلاعات اقامت
+
+  budget         Int?       // بودجه تقریبی سفر (ریال)
+  currency       String?    @default("IRT")
+
+  participants   Json?      // لیستی از کاربران همراه (نام‌ها یا userIdها)
+  interests      Json?      // علاقمندی‌های سفر (مثلاً طبیعت، تاریخی، خرید)
+
+  status         TripStatus @default(PLANNED)
+  isPublic       Boolean    @default(false) // اشتراک‌گذاری یا خصوصی
+
+  isDeleted      Boolean    @default(false)
+  deletedAt      DateTime?
+
+  reservations   Reservation[] // اگر پرداخت/رزرو دارد
+
+  coverImage     String?
+  gallery        Json?        // تصاویر بیشتر
+
+  notes          String?
+}
+
+
+model Product {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  category        String      // هتل، اقامتگاه، تور، یا سایر
+  subCategory     String?     // مثلاً "هتل لوکس"، "اقامتگاه بوم‌گردی"
+  type            ProductType // enum: HOTEL | ACCOMMODATION | TOUR | ACTIVITY | OTHER
+  province        String
+  city            String
+  address         String?
+  locationLat     Float?
+  locationLng     Float?
+  availableQty    Int        // تعداد موجود
+  reservedQty     Int        @default(0)
+  price           Int        // قیمت اصلی
+  discount        Int?       // درصد تخفیف
+  finalPrice      Int        // محاسبه شده (price - discount)
+  isActive        Boolean    @default(true)
+  isSuspended     Boolean    @default(false)
+  createdById     String
+  createdBy       User       @relation("ProductCreatedBy", fields: [createdById], references: [id])
+  reservations    Reservation[]
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  images          Json?      // Array of image paths for gallery support
+}
+
+model Reservation {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+
+  quantity        Int      // تعداد رزروشده
+  status          ReservationStatus // enum: PENDING | PAID | CANCELLED | FAILED | EXPIRED | ON_HOLD
+
+  paymentId       String?           // شناسه پرداخت (درگاه)
+  paymentMethod   String?           // مثلاً ZARINPAL, STRIPE, WALLET
+  paymentStatus   ReservationPaymentStatus     // enum: PAID | UNPAID | FAILED | REFUNDED | WAITING
+  paidAt          DateTime?
+  cancelledAt     DateTime?
+
+  startDate       DateTime? // تاریخ شروع استفاده (مثلاً تاریخ ورود به هتل)
+  endDate         DateTime? // تاریخ پایان
+
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  tripId String?
+  trip Trip? @relation(fields: [tripId], references: [id])
+}
+
+
+model Subscription {
+  id             String             @id @default(cuid())
+  tenantId       String
+  planId         String
+  startedAt      DateTime
+  expiresAt      DateTime
+  status         SubscriptionStatus @default(ACTIVE)
+  renewalEnabled Boolean            @default(true)
+  paymentMethod  String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  // Relational Fields
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  plan           SubscriptionPlan   @relation(fields: [planId], references: [id])
+}
+
+model Invoice {
+  id          String    @id @default(cuid())
+  tenantId    String
+  amount      Int
+  currency    String    @default("IRR")
+  status      String    // "paid", "unpaid", "failed", "refunded"
+  issuedAt    DateTime  @default(now())
+  paidAt      DateTime?
+  dueDate     DateTime
+  description String?
+  referenceId String?
+  gateway     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relational Fields
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model CreditWallet {
+  id            String   @id @default(cuid())
+  tenantId      String
+  userId        String
+  balance       Int      @default(0) // in credits
+  currency      String   @default("credits")
+  lastUpdatedAt DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  // Relational Fields
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions  WalletTransaction[]
+
+  @@unique([tenantId, userId])
+}
+
+model WalletTransaction {
+  id          String                @id @default(cuid())
+  walletId    String
+  amount      Int
+  type        WalletTransactionType
+  description String?
+  createdAt   DateTime              @default(now())
+
+  // Relational Fields
+  wallet      CreditWallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+// ----------
+// API & USAGE
+// ----------
+
+model ApiKey {
+  id              String          @id @default(cuid())
+  key             String          @unique
+  name            String
+  description     String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  isActive        Boolean         @default(true)
+  ipWhitelist     String[]        // لیست IPهای مجاز به صورت آرایه
+  metadata        Json?
+  createdById     String
+  createdBy       User            @relation(fields: [createdById], references: [id])
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  // ریت لیمیت متصل به این کلید
+  rateLimit       RateLimit?
+
+  // لاگ‌های مصرف API مرتبط
+  usageLogs       ApiUsageLog[]   @relation("ApiKeyUsageLogs")
+  apiUsageLogs    ApiUsageLog[]   @relation("ApiKeyApiLogs")
+  usageRecords    UsageRecord[]
+
+  @@index([createdById])
+}
+
+
+model RateLimitPolicy {
+  id            String   @id @default(cuid())
+  planId        String
+  limitType     String   // e.g. "requestsPerMinute", "tokensPerDay"
+  limitValue    Int
+  timeWindowSec Int
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relational Fields
+  plan          SubscriptionPlan @relation(fields: [planId], references: [id])
+}
+
+model RateLimit {
+  id            String    @id @default(cuid())
+  apiKeyId      String    @unique
+  requestsMade  Int       @default(0)
+  resetAt       DateTime
+  limitPerHour  Int       @default(1000)
+  lastRequestAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relational Fields
+  apiKey        ApiKey    @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+}
+
+model UsageRecord {
+  id            String    @id @default(cuid())
+  tenantId      String
+  userId        String
+  apiKeyId      String?
+  service       String    // e.g. "text-generation", "email-verification"
+  usageType     String    // e.g. "tokens", "requests"
+  amount        Int
+  metadata      Json?
+  timestamp     DateTime  @default(now())
+
+  // Relational Fields
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id])
+  apiKey        ApiKey?   @relation(fields: [apiKeyId], references: [id])
+}
+
+// ----------
+// LOGGING & WEBHOOKS
+// ----------
+
+model LoginLog {
+  id        String      @id @default(cuid())
+  userId    String
+  ipAddress String?
+  userAgent String?
+  status    LoginStatus
+  reason    String?
+  createdAt DateTime    @default(now())
+
+  // Relational Fields
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  actorId   String?  // User who performed the action
+  actorType String   // "user", "admin", "system"
+  action    String   // e.g. "user.login", "invoice.created"
+  target    String?
+  ipAddress String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  // Relational Fields
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
+  user      User?    @relation("UserAudit", fields: [actorId], references: [id])
+}
+
+model ApiUsageLog {
+  id                String    @id @default(cuid())
+  timestamp         DateTime  @default(now())
+  endpoint          String
+  method            String     // GET, POST, ...
+  statusCode        Int
+  responseTimeMs    Int?
+  ipAddress         String?
+  userAgent         String?
+  country           String?    // geo info
+  city              String?
+  isRateLimited     Boolean    @default(false)
+
+  // اتصال به API Key به عنوان کلید مصرف‌کننده
+  apiKeyId          String?
+  apiKey            ApiKey?    @relation("ApiKeyUsageLogs", fields: [apiKeyId], references: [id])
+
+  // اتصال به یوزر در صورت وجود
+  userId            String?
+  user              User?      @relation(fields: [userId], references: [id])
+
+  // اتصال به Tenant در صورت وجود
+  tenantId          String?
+  tenant            Tenant?    @relation(fields: [tenantId], references: [id])
+
+  apiKeyDirectId String?
+  apiKeyDirect ApiKey? @relation("ApiKeyApiLogs", fields: [apiKeyDirectId], references: [id])
+
+  @@index([timestamp])
+  @@index([apiKeyId])
+  @@index([userId])
+  @@index([tenantId])
+}
+
+model Webhook {
+  id            String   @id @default(cuid())
+  tenantId      String
+  url           String
+  eventTypes    String[]
+  secret        String
+  isActive      Boolean  @default(true)
+  lastTriggered DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relational Fields
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries    WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id           String   @id @default(cuid())
+  webhookId    String
+  event        String
+  statusCode   Int?
+  success      Boolean
+  requestBody  Json?
+  responseBody Json?
+  deliveredAt  DateTime @default(now())
+
+  // Relational Fields
+  webhook      Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+}
+
+// ----------
+// AUTH & SECURITY
+// ----------
+
+model EmailVerificationToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  otp       String?
+  expiresAt DateTime
+
+  // Relational Fields
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  token      String   @unique // refresh token
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastActive DateTime @updatedAt
+
+  // Relational Fields
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TwoFactorAuth {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  method      String   // sms / email / authenticator
+  secret      String?
+  phone       String?
+  backupCodes String[]
+  enabled     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relational Fields
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ----------
+// SOCIAL & CONTENT FEATURES
+// ----------
+
+model Post {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  content    String
+  location   Json?
+  media      Json[]
+  tags       String[]
+  visibility String   @default("public")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relational Fields
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  likes      Like[]
+  comments   Comment[]
+
+  @@index([userId])
+}
+
+model Pin {
+  id          String   @id @default(cuid())
+  userId      String
+  title       String
+  description String?
+  location    Json
+  type        String
+  color       String?
+  icon        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relational Fields
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  // Relational Fields
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@index([userId, postId])
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  parentId  String?
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relational Fields
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parent    Comment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: NoAction)
+  replies   Comment[] @relation("CommentReplies")
+
+  @@index([userId, postId, parentId])
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  createdAt   DateTime @default(now())
+
+  // Relational Fields
+  follower    User     @relation("follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId, followingId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  content   String
+  type      String
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  // Relational Fields
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+
+model Payment {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id])
+
+  amount         Int      // مبلغ کل پرداخت‌شده (ریال یا تومان بسته به واحد)
+  currency       String   @default("IRT")
+  status         PaymentStatus @default(PENDING) // PENDING, SUCCESS, FAILED, CANCELED, EXPIRED
+  provider       PaymentProvider @default(ZARINPAL) // مثلاً ZARINPAL, IDPAY, STRIPE
+  referenceId    String?  // کد پیگیری از سمت درگاه
+  authorityCode  String?  // کد authority مثلاً برای زرین‌پال
+  trackingCode   String?  // کد رهگیری پرداخت نهایی (مثلاً شماره تراکنش بانکی)
+
+  purpose        PaymentPurpose  // خرید پلن، خرید محصول، رزرو سفر و...
+  targetId       String?         // ID موردنظر (مثلاً PlanId یا TripId)
+  description    String?
+
+  isVerified     Boolean   @default(false)
+  verifiedAt     DateTime?
+  failedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
